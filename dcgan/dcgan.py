@@ -13,17 +13,23 @@ from keras.optimizers import Adam
 from keras.preprocessing.image import ImageDataGenerator
 from tqdm import trange
 
+from utils import normalize
+
 
 class DCGAN():
-    def __init__(self, images_folder):
+    def __init__(self, images_folder, epochs, batch_size):
         # Input shape
+        self.epochs = epochs
         self.images_folder = images_folder
         self.img_rows = 128
         self.img_cols = 128
         self.channels = 3
-        self.gen_first_dense = int(self.img_rows / 4)
         self.img_shape = (self.img_rows, self.img_cols, self.channels)
         self.latent_dim = 100
+        self.batch_size = batch_size
+        self.train_generator = self.load_dataset(images_folder)
+        self.num_classes = self.train_generator.num_classes
+        self.gen_first_dense = int(self.img_rows / 4)
 
         optimizer = Adam(0.0002, 0.5)
 
@@ -50,6 +56,21 @@ class DCGAN():
         # Trains the generator to fool the discriminator
         self.combined = Model(z, valid)
         self.combined.compile(loss='binary_crossentropy', optimizer=optimizer)
+
+
+    def load_dataset(self, images_folder):
+        def normalize(img):
+            return (img.astype(np.float32) - 127.5) / 127.5
+
+        train_datagen = ImageDataGenerator(
+            preprocessing_function=normalize)
+        train_generator = train_datagen.flow_from_directory(
+            images_folder,
+            shuffle=True,
+            target_size=(self.img_rows, self.img_cols),
+            batch_size=self.batch_size,
+            class_mode='categorical')
+        return train_generator
 
     def build_generator(self):
 
@@ -99,39 +120,6 @@ class DCGAN():
         model.add(Flatten())
         model.add(Dense(1, activation='sigmoid'))
 
-        model = Sequential()
-        model.add(Conv2D(filters=64, kernel_size=(5, 5),
-                                 strides=(2, 2), padding='same',
-                                 data_format='channels_last',
-                                 kernel_initializer='glorot_uniform',
-                                 input_shape=(self.img_shape)))
-        model.add(LeakyReLU(0.2))
-
-        model.add(Conv2D(filters=128, kernel_size=(5, 5),
-                                 strides=(2, 2), padding='same',
-                                 data_format='channels_last',
-                                 kernel_initializer='glorot_uniform'))
-        model.add(BatchNormalization(momentum=0.5))
-        model.add(LeakyReLU(0.2))
-
-        model.add(Conv2D(filters=256, kernel_size=(5, 5),
-                                 strides=(2, 2), padding='same',
-                                 data_format='channels_last',
-                                 kernel_initializer='glorot_uniform'))
-        model.add(BatchNormalization(momentum=0.5))
-        model.add(LeakyReLU(0.2))
-
-        model.add(Conv2D(filters=512, kernel_size=(5, 5),
-                                 strides=(2, 2), padding='same',
-                                 data_format='channels_last',
-                                 kernel_initializer='glorot_uniform'))
-        model.add(BatchNormalization(momentum=0.5))
-        model.add(LeakyReLU(0.2))
-
-        model.add(Flatten())
-        model.add(Dense(1))
-        model.add(Activation('sigmoid'))
-
         # model.summary()
 
         img = Input(shape=self.img_shape)
@@ -139,122 +127,66 @@ class DCGAN():
 
         return Model(img, validity)
 
-    def train(self, epochs, batch_size=128, save_interval=50):
+    def train(self, save_interval=50):
 
 
-        def normalize(img):
-            return (img.astype(np.float32) - 127.5) / 127.5
-
-        train_datagen = ImageDataGenerator(
-            preprocessing_function=normalize)
-            # rescale=1. / 255)
-            # validation_split=0.2)
-
-        for epoch in trange(epochs):
-
-            train_generator = train_datagen.flow_from_directory(
-                self.images_folder,
-                target_size=(self.img_rows, self.img_cols),
-                batch_size=batch_size,
-                # subset='training',
-                class_mode='categorical')
-
-            # val_generator = train_datagen.flow_from_directory(
-            #     '/mnt/sdb1/datasets/leaves/leaves1_200x200',
-            #     target_size=(self.img_rows, self.img_cols),
-            #     batch_size=batch_size,
-            #     subset='validation',
-            #     class_mode='categorical')
+        for epoch in trange(self.epochs):
 
             batches = 0
-            for i, (imgs, labels) in enumerate(train_generator):
+            for i, (imgs, labels) in enumerate(self.train_generator):
 
                 batches += 1
-                if batches >= train_generator.samples / batch_size:
+                if batches >= self.train_generator.samples / self.batch_size:
                     break
 
-                valid = np.ones((len(imgs), 1))
-                fake = np.zeros((len(imgs), 1))
-
+                step_num_imgs = len(imgs)
+                valid = np.ones((step_num_imgs, 1))
+                fake = np.zeros((step_num_imgs, 1))
 
                 # Sample noise and generate a batch of new images
-                noise = np.random.normal(0, 1, (len(imgs) * 2, self.latent_dim))
+                noise = np.random.normal(0, 1, (step_num_imgs, self.latent_dim))
                 gen_imgs = self.generator.predict(noise)
 
                 # Train the discriminator (real classified as ones and generated as zeros)
                 d_loss_real = self.discriminator.train_on_batch(imgs, valid)
-                d_loss_fake = self.discriminator.train_on_batch(gen_imgs, np.concatenate((fake, valid)))
+                d_loss_fake = self.discriminator.train_on_batch(gen_imgs, fake)
                 d_loss = 0.5 * np.add(d_loss_real, d_loss_fake)
 
                 # Train the generator (wants discriminator to mistake images as real)
                 g_loss = self.combined.train_on_batch(noise, valid)
 
                 # Plot the progress
-                print("%d - %d/%d - [D loss: %f, acc.: %.2f%%] [G loss: %f]" % (
-                    epoch, (i + 1) * len(imgs), train_generator.samples, d_loss[0], 100 * d_loss[1], g_loss))
+                # print("%d - %d/%d - [D loss: %f, acc.: %.2f%%] [G loss: %f]" % (
+                #     epoch, (i + 1) * len(imgs), train_generator.samples, d_loss[0], 100 * d_loss[1], g_loss))
 
             self.save_imgs(epoch)
             self.save_model()
 
+    def generate_img(self, epoch, size=10):
+        noises = np.random.normal(0, 1, (size, 100))
+        gen_imgs = self.generator.predict(noises)
+        for i, img in enumerate(gen_imgs):
+            img = normalize(img)
+            # img_norm = cv2.normalize(img_gen, None, alpha=0, beta=255, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_32F)
+            # img_norm = img_norm.astype(np.uint8)
+            # img_norm_rgb = cv2.cvtColor(img_norm, cv2.COLOR_BGR2RGB)
+            # cv2.imwrite('color_img_norm_cv.jpg', img_norm_rgb)
+            Image.fromarray(img, 'RGB').save('images/%s_%d.png' % (epoch, i))
+
     def save_imgs(self, epoch):
-        r, c = 5, 5
-        noise = np.random.normal(0, 1, (r * c, self.latent_dim))
-        gen_imgs = self.generator.predict(noise)
-
-        # Rescale images 0 - 1
-        # gen_imgs = 0.5 * gen_imgs + 0.5
-        # gen_imgs *= 255
-
-        fig, axs = plt.subplots(r, c)
-        cnt = 0
-        for i in range(r):
-            for j in range(c):
-                axs[i, j].imshow(gen_imgs[cnt, :, :])  # , 0], cmap='gray')
-                axs[i, j].axis('off')
-                cnt += 1
-        fig.savefig("images/leaves_%d.png" % epoch)
-        plt.close()
+        for i in self.train_generator.class_indices:
+            self.generate_img(i, epoch)
 
     def save_model(self):
-
         def save(model, model_name):
             model_path = "saved_model/%s" % model_name
-            # weights_path = "saved_model/%s_weights.hdf5" % model_name
-            # options = {"file_arch": model_path,
-            #            "file_weight": weights_path}
-            # json_string = model.to_json()
-            # open(options['file_arch'], 'w').write(json_string)
-            # model.save_weights(options['file_weight'])
             model.save(model_path)
-
         save(self.generator, "generator")
         save(self.discriminator, "discriminator")
-
-
-def normalize(gen_imgs):
-    # Normalised [0,1]
-    gen_imgs = (gen_imgs - np.min(gen_imgs)) / np.ptp(gen_imgs)
-
-    # Normalised [0,255] as integer
-    gen_imgs = 255 * (gen_imgs - np.min(gen_imgs)) / np.ptp(gen_imgs).astype(int)
-    return gen_imgs.astype(np.uint8)
-
-
-def generate_img(filepath, size=1):
-    model = load_model(filepath)
-    noises = np.random.normal(0, 1, (size, 100))
-    imgs_gen = model.predict(noises)
-    for i, img in enumerate(imgs_gen):
-        img = normalize(img)
-        # img_norm = cv2.normalize(img_gen, None, alpha=0, beta=255, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_32F)
-        # img_norm = img_norm.astype(np.uint8)
-        # img_norm_rgb = cv2.cvtColor(img_norm, cv2.COLOR_BGR2RGB)
-        # cv2.imwrite('color_img_norm_cv.jpg', img_norm_rgb)
-        Image.fromarray(img, 'RGB').save('img_%d.png' % i)
 
 if __name__ == '__main__':
 
     dataset_path = '/mnt/sdb1/datasets/parasites/parasites_eggs_8'
-    dcgan = DCGAN(dataset_path)
-    dcgan.train(epochs=300, batch_size=4, save_interval=50)
+    dcgan = DCGAN(images_folder=dataset_path, epochs=300, batch_size=32)
+    dcgan.train(save_interval=50)
     # generate_img('saved_model/generator_leaves.hdf5', size=10)

@@ -1,5 +1,7 @@
 import time
 import os
+import matplotlib
+# matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import matplotlib.gridspec as gridspec
 import numpy as np
@@ -10,6 +12,7 @@ from keras.layers import Flatten, BatchNormalization, Dense, Activation
 from keras.layers.advanced_activations import LeakyReLU
 from keras.optimizers import Adam
 from keras.preprocessing.image import ImageDataGenerator
+from tqdm import trange
 
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 
@@ -146,7 +149,7 @@ def save_generated_images(generated_images, epoch, batch_number):
 
     plt.savefig(save_name, bbox_inches='tight', pad_inches=0)
     plt.pause(0.0000000001)
-    plt.show()
+    # plt.show()
 
 
 # Main train function
@@ -170,7 +173,7 @@ def train_dcgan(batch_size, epochs, image_shape, dataset_path):
     dataset_generator = load_dataset(dataset_path, batch_size, image_shape)
 
     # 11788 is the total number of images on the bird dataset
-    number_of_batches = int(11788 / batch_size)
+    number_of_batches = int(dataset_generator.samples / batch_size)
 
     # Variables that will be used to plot the losses from the discriminator and
     # the adversarial models
@@ -184,11 +187,11 @@ def train_dcgan(batch_size, epochs, image_shape, dataset_path):
     current_batch = 0
 
     # Let's train the DCGAN for n epochs
-    for epoch in range(epochs):
+    for epoch in trange(epochs):
 
         print("Epoch " + str(epoch+1) + "/" + str(epochs) + " :")
 
-        for batch_number in range(number_of_batches):
+        for batch_number in trange(number_of_batches):
 
             start_time = time.time()
 
@@ -238,22 +241,23 @@ def train_dcgan(batch_size, epochs, image_shape, dataset_path):
             batches = np.append(batches, current_batch)
 
             # Each 50 batches show and save images
-            if((batch_number + 1) % 50 == 0 and
-               current_batch_size == batch_size):
-                save_generated_images(generated_images, epoch, batch_number)
+            # if((batch_number + 1) % 50 == 0 and
+            #    current_batch_size == batch_size):
+            #     save_generated_images(generated_images, epoch, batch_number)
 
             time_elapsed = time.time() - start_time
 
             # Display and plot the results
-            print("     Batch " + str(batch_number + 1) + "/" +
-                  str(number_of_batches) +
-                  " generator loss | discriminator loss : " +
-                  str(g_loss) + " | " + str(d_loss) + ' - batch took ' +
-                  str(time_elapsed) + ' s.')
+            # print("     Batch " + str(batch_number + 1) + "/" +
+            #       str(number_of_batches) +
+            #       " generator loss | discriminator loss : " +
+            #       str(g_loss) + " | " + str(d_loss) + ' - batch took ' +
+            #       str(time_elapsed) + ' s.')
 
             current_batch += 1
 
         # Save the model weights each 5 epochs
+        save_generated_images(generated_images, epoch, 1)
         if (epoch + 1) % 5 == 0:
             discriminator.trainable = True
             generator.save('models/generator_epoch' + str(epoch) + '.hdf5')
@@ -272,7 +276,7 @@ def train_dcgan(batch_size, epochs, image_shape, dataset_path):
         if epoch == 0:
             plt.legend()
         plt.pause(0.0000000001)
-        plt.show()
+        # plt.show()
         plt.savefig('trainingLossPlot.png')
 
 
